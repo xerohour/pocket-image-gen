@@ -44,7 +44,9 @@
     }catch(e){}
   }
   window.__genLog = [];
-  function genLog(t){ try{ window.__genLog.push(new Date().toISOString().slice(11,19) + " " + t); setBadge("shim v3\n" + t); }catch(e){} }
+  function genLog(t){ try{ window.__genLog.push(new Date().toISOString().slice(11,19) + " " + t); setBadge("shim v4\n" + t); }catch(e){} }
+  function sleep(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
+  var lastGenStart = 0;
   genLog("ready");
   var players = {}, nextPlayer = 1;
   function statusFor(a, state){
@@ -73,11 +75,29 @@
         var models = ["flux", "flux", "turbo", "turbo"], lastErr = null;
         for(var mi = 0; mi < models.length; mi++){
           try{
+            /* Anonymous Pollinations allows one image per IP, at least 45s
+               apart; past that it answers 402 with a Retry-After header.
+               Johnny's phone is on a carrier IP shared by many users, so
+               its slot is usually busy. Pace attempts and honour the wait
+               instead of failing fast. */
+            var gap = 46000 - (Date.now() - lastGenStart);
+            if(gap > 0){ genLog("rate limit: waiting " + Math.ceil(gap/1000) + "s..."); await sleep(gap); }
+            lastGenStart = Date.now();
             genLog("gen " + models[mi] + " try " + (mi+1) + ": " + prompt.slice(0, 60));
             var seed = Math.floor(Math.random()*1000000);
             var url = "https://image.pollinations.ai/prompt/" + encodeURIComponent(prompt)
               + "?width=1280&height=1024&model=" + models[mi] + "&nologo=true&seed=" + seed;
             var r = await fetch(url);
+            if(r.status === 402){
+              var ra = parseInt(r.headers.get("retry-after") || "45", 10);
+              if(!(ra > 0)) ra = 45;
+              if(ra > 120) ra = 120;
+              genLog("402 rate-limited, retry in " + ra + "s...");
+              await sleep(ra * 1000);
+              lastGenStart = Date.now();
+              r = await fetch(url);
+              if(!r.ok) throw new Error("Image service returned HTTP " + r.status);
+            }
             if(!r.ok) throw new Error("Image service returned HTTP " + r.status);
             var ct = r.headers.get("content-type") || "";
             if(ct.indexOf("image/") !== 0) throw new Error("Image service returned " + ct);
@@ -85,7 +105,7 @@
             if(!b || !b.size) throw new Error("Image service returned an empty file");
             genLog("gen OK " + models[mi] + " " + Math.round(b.size/1024) + "KB");
             return {url: URL.createObjectURL(b)};
-          }catch(e){ lastErr = e; genLog("gen ERR " + models[mi] + ": " + (e && e.message ? e.message : e)); await new Promise(function(res){ setTimeout(res, 1500); }); }
+          }catch(e){ lastErr = e; genLog("gen ERR " + models[mi] + ": " + (e && e.message ? e.message : e)); await sleep(1500); }
         }
         genLog("gen FAILED: " + (lastErr && lastErr.message ? lastErr.message : lastErr));
         throw lastErr || new Error("Image generation failed");
