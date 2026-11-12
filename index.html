@@ -30,6 +30,22 @@
       return "Make an image of " + subject + " in the style of " + style;
     }catch(e){ return te; }
   }
+  /* Debug badge: tiny status readout so a phone screenshot shows whether this
+     shim loaded and what the last generation attempt did. Remove anytime. */
+  var __badge = null;
+  function setBadge(t){
+    try{
+      if(!__badge){
+        __badge = document.createElement("div");
+        __badge.style.cssText = "position:fixed;left:6px;bottom:6px;z-index:999999;font:10px monospace;color:#fff;background:rgba(0,0,0,.65);padding:3px 6px;border-radius:4px;pointer-events:none;max-width:92vw;white-space:pre-wrap;word-break:break-word;";
+        (document.body || document.documentElement).appendChild(__badge);
+      }
+      __badge.textContent = t;
+    }catch(e){}
+  }
+  window.__genLog = [];
+  function genLog(t){ try{ window.__genLog.push(new Date().toISOString().slice(11,19) + " " + t); setBadge("shim v3\n" + t); }catch(e){} }
+  genLog("ready");
   var players = {}, nextPlayer = 1;
   function statusFor(a, state){
     return {status:{playerId:a.__pid, state: state || (a.paused ? "paused" : "playing"),
@@ -57,6 +73,7 @@
         var models = ["flux", "flux", "turbo", "turbo"], lastErr = null;
         for(var mi = 0; mi < models.length; mi++){
           try{
+            genLog("gen " + models[mi] + " try " + (mi+1) + ": " + prompt.slice(0, 60));
             var seed = Math.floor(Math.random()*1000000);
             var url = "https://image.pollinations.ai/prompt/" + encodeURIComponent(prompt)
               + "?width=1280&height=1024&model=" + models[mi] + "&nologo=true&seed=" + seed;
@@ -66,9 +83,11 @@
             if(ct.indexOf("image/") !== 0) throw new Error("Image service returned " + ct);
             var b = await r.blob();
             if(!b || !b.size) throw new Error("Image service returned an empty file");
+            genLog("gen OK " + models[mi] + " " + Math.round(b.size/1024) + "KB");
             return {url: URL.createObjectURL(b)};
-          }catch(e){ lastErr = e; await new Promise(function(res){ setTimeout(res, 1500); }); }
+          }catch(e){ lastErr = e; genLog("gen ERR " + models[mi] + ": " + (e && e.message ? e.message : e)); await new Promise(function(res){ setTimeout(res, 1500); }); }
         }
+        genLog("gen FAILED: " + (lastErr && lastErr.message ? lastErr.message : lastErr));
         throw lastErr || new Error("Image generation failed");
       }
       if(o.service === "audio"){
