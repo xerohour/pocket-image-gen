@@ -8,6 +8,28 @@
    every call rejects with "Not available". Image generation is served by
    Pollinations (free, no key); background audio plays the bundled mp4. */
 (function(){
+  function cleanPrompt(te){
+    /* The gizmo builds long paper/scene templates ("A a taco frutiger aero,
+       printed centered on a plain sheet...") for Pocket's own image model.
+       Pollinations latches onto the paper/scene description and drops the
+       subject (blank paper, no taco), so rebuild the short prompt the user
+       actually sees: "Make an image of {subject} in the style of {style}". */
+    try{
+      var head = te.replace(/^A\s+/, "").split(",")[0];
+      var m = head.match(/^(.*?)\s+in the style of\s+(.*)$/);
+      var subject, style;
+      if(m){ subject = m[1]; style = m[2]; }
+      else{
+        var words = head.trim().split(/\s+/);
+        if(words.length < 3) return te;
+        subject = words.slice(0, 2).join(" ");
+        style = words.slice(2).join(" ");
+      }
+      subject = (subject || "").trim(); style = (style || "").trim();
+      if(!subject || !style) return te;
+      return "Make an image of " + subject + " in the style of " + style;
+    }catch(e){ return te; }
+  }
   var players = {}, nextPlayer = 1;
   function statusFor(a, state){
     return {status:{playerId:a.__pid, state: state || (a.paused ? "paused" : "playing"),
@@ -29,18 +51,25 @@
     stream: function(){ return function(){}; },
     unary: async function(o){
       if(o.service === "imageGeneration" && o.method === "generate"){
-        var prompt = (o.request && o.request.prompt) || "";
-        if(!prompt) throw new Error("Empty prompt");
-        var seed = Math.floor(Math.random()*1000000);
-        var url = "https://image.pollinations.ai/prompt/" + encodeURIComponent(prompt)
-          + "?width=1280&height=1024&model=flux&nologo=true&seed=" + seed;
-        var r = await fetch(url);
-        if(!r.ok) throw new Error("Image service returned HTTP " + r.status);
-        var ct = r.headers.get("content-type") || "";
-        if(ct.indexOf("image/") !== 0) throw new Error("Image service returned " + ct);
-        var b = await r.blob();
-        if(!b || !b.size) throw new Error("Image service returned an empty file");
-        return {url: URL.createObjectURL(b)};
+        var raw = (o.request && o.request.prompt) || "";
+        if(!raw) throw new Error("Empty prompt");
+        var prompt = cleanPrompt(raw);
+        var models = ["flux", "flux", "turbo", "turbo"], lastErr = null;
+        for(var mi = 0; mi < models.length; mi++){
+          try{
+            var seed = Math.floor(Math.random()*1000000);
+            var url = "https://image.pollinations.ai/prompt/" + encodeURIComponent(prompt)
+              + "?width=1280&height=1024&model=" + models[mi] + "&nologo=true&seed=" + seed;
+            var r = await fetch(url);
+            if(!r.ok) throw new Error("Image service returned HTTP " + r.status);
+            var ct = r.headers.get("content-type") || "";
+            if(ct.indexOf("image/") !== 0) throw new Error("Image service returned " + ct);
+            var b = await r.blob();
+            if(!b || !b.size) throw new Error("Image service returned an empty file");
+            return {url: URL.createObjectURL(b)};
+          }catch(e){ lastErr = e; await new Promise(function(res){ setTimeout(res, 1500); }); }
+        }
+        throw lastErr || new Error("Image generation failed");
       }
       if(o.service === "audio"){
         var req = o.request || {};
